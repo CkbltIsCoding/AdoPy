@@ -20,7 +20,7 @@ class Level:
                       '5': 555, '6': 666, '7': 777, '8': 888, '!': 999}
 
     def __init__(self, data, path=None):
-        self.tiles: [Tile] = []
+        self.tiles: list[Tile] = []
         s = data["settings"]
         self.song = s["song"]
         self.path = path
@@ -46,13 +46,13 @@ class Level:
             type_data = "pathData"
         else:
             raise Exception()
-        self.tiles.append(Tile(0, self.trackStyle, self.trackColor, self.secondaryTrackColor))
+        self.tiles.append(Tile(0))
         for direction in data[type_data]:
             if type_data == "angleData":
                 angle = direction
             else:
                 angle = Level.path_data_dict[direction]
-            self.tiles.append(Tile(angle, self.trackStyle, self.trackColor, self.secondaryTrackColor))
+            self.tiles.append(Tile(angle))
 
         self.actions = data["actions"]
 
@@ -76,6 +76,7 @@ class Level:
 
     def calc(self):
         self.calc_tiles_actions()
+        self.calc_color()
         self.calc_pos()
         self.calc_beat()
 
@@ -84,6 +85,18 @@ class Level:
             tile = self.tiles[i]
             tile.actions_start = bisect_left(self.actions, i, key=lambda action: action["floor"])
             tile.actions_stop = bisect_right(self.actions, i, key=lambda action: action["floor"])
+
+    def calc_color(self):
+        for tile in self.tiles:
+            tile.orig_trackColor = self.trackColor
+            tile.orig_secondaryTrackColor = self.secondaryTrackColor
+            tile.orig_trackStyle = self.trackStyle
+        for action in self.actions:
+            if action["eventType"] == "ColorTrack":
+                for tile in self.tiles[action["floor"]:]:
+                    tile.orig_trackColor = action["trackColor"]
+                    tile.orig_secondaryTrackColor = action["secondaryTrackColor"]
+                    tile.orig_trackStyle = action["trackStyle"]
 
     def calc_pos(self):
         for i in range(len(self.tiles)):
@@ -102,7 +115,10 @@ class Level:
 
             for action in self.actions[tile.actions_start:tile.actions_stop]:
                 if action["eventType"] == "PositionTrack":
-                    index = self.find_tile_index(i, action["relativeTo"])
+                    if "relativeTo" in action:
+                        index = self.find_tile_index(i, action["relativeTo"])
+                    else:
+                        index = i
                     x, y = action["positionOffset"]
                     tile.orig_x = self.tiles[index].orig_x + x
                     tile.orig_y = self.tiles[index].orig_y + y
@@ -205,8 +221,9 @@ class Level:
             tile.rotation = tile.orig_rotation
             tile.opacity = tile.orig_opacity
             tile.w, tile.h = tile.orig_scale, tile.orig_scale
-            tile.trackColor = self.trackColor
-            tile.secondaryTrackColor = self.secondaryTrackColor
+            tile.trackColor = tile.orig_trackColor
+            tile.secondaryTrackColor = tile.orig_secondaryTrackColor
+            tile.style = tile.orig_trackStyle
 
         if beat is None:
             return
@@ -216,12 +233,6 @@ class Level:
             if beat < action_tile.beat:
                 break
             match action["eventType"]:
-                case "ColorTrack":
-                    for tile in self.tiles:
-                        tile.trackColor = action["trackColor"]
-                        tile.secondaryTrackColor = action["secondaryTrackColor"]
-                        tile.style = action["trackStyle"]
-
                 case "RecolorTrack":
                     start = self.find_tile_index(action["floor"], action["startTile"])
                     stop = self.find_tile_index(action["floor"], action["endTile"]) + 1
@@ -237,21 +248,24 @@ class Level:
                         if action["duration"] == 0:
                             a = 1
                         else:
-                            a = ease(action["ease"], (beat - action_tile.beat) / action["duration"])
+                            a = ease(action["ease"],
+                                     (beat - (action_tile.beat + action["angleOffset"] / 180)) / action["duration"])
                         if "positionOffset" in action:
                             x, y = action["positionOffset"]
-                            if x is None or y is None:
-                                continue
-                            tile.x += (tile.orig_x + x - tile.x) * a
-                            tile.y += (tile.orig_y + y - tile.y) * a
-                        if action.get("scale", None) is not None:
+                            if x is not None:
+                                tile.x += (tile.orig_x + x - tile.x) * a
+                            if y is not None:
+                                tile.y += (tile.orig_y + y - tile.y) * a
+                        if "rotationOffset" in action:
+                            tile.rotation = action["rotationOffset"]
+                        if "scale" in action:
                             if isinstance(action["scale"], int):
                                 tile.w += (action["scale"] - tile.w) * a
                                 tile.h += (action["scale"] - tile.h) * a
                             else:
                                 tile.w += (action["scale"][0] - tile.w) * a
                                 tile.h += (action["scale"][1] - tile.h) * a
-                        if action.get("opacity", None) is not None:
+                        if "opacity" in action:
                             tile.opacity += (action["opacity"] - tile.opacity) * a
 
                 case "AnimateTrack":
@@ -263,6 +277,10 @@ class Level:
                         self.trackDisappearAnimation = action["trackDisappearAnimation"]
                     if "beatsBehind" in action:
                         self.beatsBehind = action["beatsBehind"]
+
+                case "RepeatEvents":  # TODO
+                    if action["repeatType"] == "Beat":
+                        pass
 
         for i in range(len(self.tiles)):
             tile = self.tiles[i]

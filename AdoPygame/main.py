@@ -92,6 +92,10 @@ class AdoPygame:
                         self.player_tile = 0
                         pygame.mixer_music.play()
                         self.camera_pos = Pt(self.level.position)
+                        self.camera_pos_no = Pt()
+                        self.camera_zoom = 200
+                        self.camera_rotation = 0
+                        self.camera_relative_to = "Player"
                         self.cur = {
                             "TOO_EARLY": 0,
                             "EARLY": 0,
@@ -109,6 +113,9 @@ class AdoPygame:
                         self.now_tile = None
                         self.beat = None
                         self.timer = None
+                        self.camera_zoom = 200
+                        self.camera_rotation = 0
+                        self.camera_relative_to = "Player"
                         pygame.mixer_music.stop()
         elif event.type == pygame.MOUSEBUTTONDOWN:
             self.dragging = True
@@ -139,7 +146,8 @@ class AdoPygame:
                     if action["duration"] == 0 or action["ease"] == "OutFlash":
                         a = 1
                     else:
-                        a = ease(action["ease"], (self.beat - action_tile.beat) / action["duration"])
+                        a = ease(action["ease"],
+                                 (self.beat - (action_tile.beat + action["angleOffset"] / 180)) / action["duration"])
                     if "zoom" in action:
                         self.camera_zoom += (action["zoom"] - self.camera_zoom) * a
                     if "rotation" in action:
@@ -150,7 +158,6 @@ class AdoPygame:
                         x, y = action["position"]
                         if self.camera_relative_to == "Tile":
                             if x is not None:
-                                # camera_pos += (Pt(action_tile.x, action_tile.y) + action["position"] - camera_pos) * a
                                 camera_pos.x += (action_tile.x + x - camera_pos.x) * a
                             if y is not None:
                                 camera_pos.y += (action_tile.y + y - camera_pos.y) * a
@@ -172,11 +179,14 @@ class AdoPygame:
                 self.camera_pos_no = camera_pos
                 self.camera_pos = camera_pos
 
-            if not self.autoplay:
-                while self.level.judge(self.player_tile + 1, self.timer + self.offset) == "TOO_LATE":
+            if not self.autoplay and self.player_tile < len(self.level.tiles) - 1:
+                while self.player_tile < len(self.level.tiles) - 1\
+                        and self.level.judge(self.player_tile + 1, self.timer + self.offset) == "TOO_LATE":
                     self.player_tile += 1
                     self.cur["TOO_LATE"] += 1
                 for _ in range(self.key_pressed_cnt):
+                    if self.player_tile == len(self.level.tiles) - 1:
+                        break
                     judgement = self.level.judge(self.player_tile + 1, self.timer + self.offset)
                     if judgement != "TOO_EARLY":
                         self.player_tile += 1
@@ -212,7 +222,7 @@ class AdoPygame:
         tile = self.level.tiles[self.player_tile]
         red = "#dd3333"
         blue = "#3366cc"
-        if self.level.stickToFloors == "Enabled":
+        if self.level.stickToFloors is True or self.level.stickToFloors == "Enabled":
             x, y = tile.x, tile.y
         else:
             x, y = tile.orig_x, tile.orig_y
@@ -237,13 +247,25 @@ class AdoPygame:
 
     def render_tiles(self):
         pr = self.pr
-        br = self.pr * 21 / 20
+        br = self.pr * 11 / 10
+        b = self.pr / 10
         square = pygame.Surface((pr * 2, pr * 2), pygame.SRCALPHA)
         rect = pygame.Surface((pr * 4, pr * 2), pygame.SRCALPHA)
         half_square = pygame.Surface((pr, pr * 2), pygame.SRCALPHA)
+        tri = pygame.Surface((pr, pr * 2), pygame.SRCALPHA)
         square_b = pygame.Surface((br * 2, br * 2), pygame.SRCALPHA)
         rect_b = pygame.Surface((br * 4, br * 2), pygame.SRCALPHA)
         half_square_b = pygame.Surface((br, br * 2), pygame.SRCALPHA)
+        tri_b = pygame.Surface((br, br * 2), pygame.SRCALPHA)
+        square.fill("#ffffff")
+        square_b.fill("#ffffff")
+        half_square.fill("#ffffff")
+        half_square_b.fill("#ffffff")
+        pygame.draw.polygon(tri, "#ffffff", ((0, 0), (pr, pr), (0, pr * 2)))
+        pygame.draw.polygon(tri_b, "#ffffff", ((0, 0), (br, br), (0, br * 2)))
+        rect.fill("#ffffff")
+        rect_b.fill("#ffffff")
+
         surf_tile_main = pygame.Surface((pr * 6, pr * 6), pygame.SRCALPHA)
         surf_tile_border = pygame.Surface((pr * 6, pr * 6), pygame.SRCALPHA)
         surf_tile_color = pygame.Surface((pr * 6, pr * 6), pygame.SRCALPHA)
@@ -255,7 +277,7 @@ class AdoPygame:
             next_tile = self.level.tiles[index + 1] if index < len(self.level.tiles) - 1 else None
 
             # 是否渲染
-            if tile.is_placeholder():
+            if tile.is_placeholder() and not tile.is_midspin_placeholder():
                 continue
             # continue
             screen_pos = self.cnv2screen(Pt(tile.x, tile.y))
@@ -285,7 +307,10 @@ class AdoPygame:
                 case _:
                     raise Exception(tile.style)
 
-            angle = tile.angle
+            if tile.is_midspin_placeholder():
+                angle = pre_tile.angle + 180
+            else:
+                angle = tile.angle
             next_angle = next_tile.angle if next_tile else tile.angle
             key = (angle, next_angle,
                    main_color.normalize(),
@@ -294,12 +319,6 @@ class AdoPygame:
             if key in self.render_tiles_dict:
                 surf_tile = self.render_tiles_dict[key].copy()
             else:
-                square.fill("#ffffff")
-                square_b.fill("#ffffff")
-                half_square.fill("#ffffff")
-                half_square_b.fill("#ffffff")
-                rect.fill("#ffffff")
-                rect_b.fill("#ffffff")
                 surf_tile_main.fill("#00000000")
                 surf_tile_border.fill("#00000000")
                 surf_tile.fill("#00000000")
@@ -313,12 +332,26 @@ class AdoPygame:
                     surf_tile_main.blit(new_half_square, new_half_square.get_rect(center=pos + (pr * 3, pr * 3)))
                     new_half_square_b = pygame.transform.rotate(half_square_b, angle)
                     surf_tile_border.blit(new_half_square_b, new_half_square_b.get_rect(center=pos + (pr * 3, pr * 3)))
+                elif next_tile is not None and next_tile.is_midspin_placeholder():  # 中旋
+                    pos = Pt(move(angle)) * (pr // 2)
+                    pos.y *= -1
+                    new_tri = pygame.transform.rotate(tri, angle)
+                    surf_tile_main.blit(new_tri, new_tri.get_rect(center=pos + (pr * 3, pr * 3)))
+                    new_tri_b = pygame.transform.rotate(tri_b, angle)
+                    surf_tile_border.blit(new_tri_b, new_tri_b.get_rect(center=pos + (pr * 3, pr * 3)))
+
+                    new_half_square = pygame.transform.rotate(half_square, angle)
+                    pos = -Pt(move(angle)) * (pr // 2)
+                    pos.y *= -1
+                    surf_tile_main.blit(new_half_square, new_half_square.get_rect(center=pos + (pr * 3, pr * 3)))
+                    new_half_square_b = pygame.transform.rotate(half_square_b, angle)
+                    surf_tile_border.blit(new_half_square_b, new_half_square_b.get_rect(center=pos + (pr * 3, pr * 3)))
                 elif angle == next_angle:  # 180° 砖块
                     new_rect = pygame.transform.rotate(rect, angle)
                     surf_tile_main.blit(new_rect, new_rect.get_rect(center=(pr * 3, pr * 3)))
                     new_rect_b = pygame.transform.rotate(rect_b, angle)
                     surf_tile_border.blit(new_rect_b, new_rect_b.get_rect(center=(pr * 3, pr * 3)))
-                else:  # 普通砖块
+                else:
                     pygame.draw.circle(surf_tile_main, "#ffffff", (pr * 3, pr * 3), round(pr))
                     pygame.draw.circle(surf_tile_border, "#ffffff", (pr * 3, pr * 3), round(br))
                     new_square = pygame.transform.rotate(square, angle)
@@ -367,10 +400,13 @@ class AdoPygame:
                 tile_scale = max(pr * 6 * tile.w / 100, 0), max(pr * 6 * tile.h / 100, 0)
                 new_surf_tile = pygame.transform.scale(new_surf_tile, tile_scale)
             new_surf_tile.set_alpha(round(tile.opacity * 255 / 100))
+            pos = Pt(tile.x, tile.y)
+            if next_tile is not None and next_tile.is_midspin_placeholder():
+                pos += move(tile.angle)
             self.screen.blit(new_surf_tile,
                              new_surf_tile.get_rect(
                                  center=self.cnv2screen(
-                                     Pt(tile.x, tile.y)
+                                     pos
                                  )
                              )
                              )
